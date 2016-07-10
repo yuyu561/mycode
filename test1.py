@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
- 
+import itertools
 import pandas as pd
 import math
 import networkx as nx
@@ -59,16 +59,12 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='Lng', py='Lat',
         vehicle_id = 0
         capacity = {}
         duration = {}
-        for u in G:
-            if G.node[u][node_type] == 'pickup':
-                capacity[vehicle_id] = [G.node[u][quantity],
-                                        G.node[u][quantity]]
-                duration[vehicle_id] = 2 * dist[cross_dock][u]\
-                                       + 2 * dist[cross_dock][G.node[u][pair]]
-                vehicle_id += 1
+		routing_list={}
 
         # Construct an initial-primitive solution.
-        G = construct_primitive_solution(G, cross_dock, node_type, pair, dist)
+        G, capacity, duration = construct_primitive_solution(G, cross_dock, node_type, pair, dist)
+		
+		
         used_vehicles = sum(1 for vehicle in capacity.keys() if
                             capacity[vehicle][0] != 0 and capacity[vehicle][1] != 0)
     frequency = {(u, v): 1 if G.has_edge(u, v) else 0 for u in G for v in G}
@@ -122,36 +118,167 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='Lng', py='Lat',
     
     
 
-def construct_primitive_solution(G, cross_dock, node_type, pair, dist):
-    """
-    Constructs a fist solution for Clarke-Wright algorithm.
-
-    This solution uses for every pair of nodes (supplier-customer) a different
-    vehicle to serve them.
-
-    :param G: graph, a graph with nodes which represents suppliers and customers.
-    :param cross_dock: label of node which represents cross-dock.
-    :param node_type: string , node data key corresponding to the type of node
-    (supplier or customer).
-    :param pair: string, node data key corresponding to the label of node's pair.
-    :param dist: array of distance between every pair of nodes.
-    """
+def construct_primitive_solution(G, capacity, duration, routing_list, node_type, pair, dist):
     vehicle_id = 0
     for u in G:
         if G.node[u][node_type] == 'pickup':
             pair_node = G.node[u][pair]
             G.node[u]['vehicle'] = vehicle_id
             G.node[pair_node]['vehicle'] = vehicle_id
+
             # find the best start point 
-            G.add_edge(cross_dock, u, weight=dist[cross_dock][u],
+			min_dist=float('inf')
+			for v in G:
+				if G.node[v][node_type] == 'start':
+					now_dist=dist[u][v]
+					if now_dist < min_dist :
+						start_node,min_dist = (v,now_dist) 
+
+            G.add_edge(start_node, u, weight=dist[start_node][u],
                        type=G.node[u][node_type], vehicle=vehicle_id)
-            G.add_edge(u, cross_dock, weight=dist[u][cross_dock],
-                       type=G.node[u][node_type], vehicle=vehicle_id)
-            G.add_edge(cross_dock, pair_node,
-                       weight=dist[cross_dock][pair_node],
+            G.add_edge(u, pair_node, weight=dist[u][pair_node],
                        type=G.node[pair_node][node_type], vehicle=vehicle_id)
-            G.add_edge(pair_node, cross_dock,
-                       weight=dist[pair_node][cross_dock],
-                       type=G.node[pair_node][node_type], vehicle=vehicle_id)
+
+			routing_list[vehicle_id] = [start_node, u, pair_node]
+			duration[vehicle_id] = dist[start_node][u] + dist[u][pair_node]
+			capacity[vehicle_id] = [                       ]
+			
             vehicle_id += 1
+    return G, capacity, duration
+
+def calculate_route_cost(route, dist):
+	route_distance=0
+	for i in range(1,len(route)):
+		route_distance+=dist[route(i-1)][route(i)]
+	return route_distance
+	
+def calculate_route_capacity(G, route, quantity):
+	route_capacity = {}
+	cumul_c = 0
+	for u in route:
+		if G.node[u][node_type] == 'pickup':
+			cumul_c += G.node[u][quantity]
+        if G.node[u][node_type] == 'dropoff':
+            cumul_c -= G.node[u][quantity]
+        route_capacity[u] = cumul_c
+	return route_capacity
+    
+def check_route_capacity(route_capacity,capacity_cap):
+    return max([route_capacity[i] for i in route_capacity])>capacity_cap
+    
+def check_route_order(G, route):
+    flag=[]
+	for uu in route:
+		if (G.node[uu][node_type] == 'pickup' and route.index(uu)<route.index(G.node[uu][pair]))
+			or (G.node[uu][node_type] == 'dropoff' and route.index(uu)>route.index(G.node[uu][pair]))
+            or (G.node[uu][node_type] == 'start' and route.index(uu)==0):
+            flag.append(0)
+        else:
+            flag.append(1)
+    return sum(flag)==0
+
+def find_vehicle_by_node(routing_list, u):
+	for vehicle_id in routing_list:
+		if u in routing_list[vehicle_id]:
+			vehicle = vehicle_id
+    return vehicle 
+    
+def clarke_wright(G, capacity, duration, routing_list, dist, node_type,
+                  quantity, pair, Q, T):
+    savings = {}
+    for u in G:
+        vehicle_id = find_vehicle_by_node(routing_list, u)  
+        current_route=routing_list[vehicle_id]
+        current_cost_u=calculate_route_cost(current_route, dist)
+        for v in G:
+            if G.node[u][node_type] == 'pickup' and G.node[v][node_type] == 'pickup':
+                pair_u = G.node[u][pair]
+                pair_v = G.node[v][pair]
+        
+        
+				start_node=current_route[0]
+				current_route.pop(0)
+				current_route.append(v)
+				current_route.append(pair_v)
+				
+                best_route, best_route_cost = [], float('inf')
+				for route in itertools.permutations(current_route):
+                    route.insert(0,start_node)
+					#check if it is feasible
+                    route_capacity = calculate_route_capacity(G, route, quantity)
+                    route_distance = calculate_route_cost(route, dist)
+                    if not(check_route_order and check_route_capacity):
+                        continue
+                    if route_distance<best_route_cost:
+                        best_route, best_route_cost=route, route_distance
+                if not best_route_cost == float('inf'):
+                    savings[(u,v)] = current_cost_u + cost_v
+                    
+                        
+                    
+
+				
+				
+                savings[(u, v)] = dist[cross_dock][u] + dist[cross_dock][v] \
+                                  - dist[u][v] + dist[cross_dock][pair_u] \
+                                  + dist[cross_dock][pair_v] - dist[pair_u][pair_v]
+
+    import operator
+
+    sorted_savings = sorted(savings.items(), key=operator.itemgetter(1),
+                            reverse=True)
+
+    for (u, v), savings in sorted_savings:
+        pair_u = G.node[u][pair]
+        pair_v = G.node[v][pair]
+        if (G.has_edge(cross_dock, u)) and (G.has_edge(v, cross_dock))\
+                and (not G.has_edge(u, v)):
+            index, pair_index = (0, 1) if G.node[v][node_type] == 'pickup' else (1, 0)
+
+            # Check if vehicle's capacity is sufficient to service new node.
+            if capacity[G.node[v]['vehicle']][index] + G.node[u][quantity] > Q \
+                    and capacity[G.node[pair_v]['vehicle']][pair_index] + \
+                            G.node[u][quantity] > Q:
+                continue
+
+            # Initialize object to check the feasibility of solution
+            # based on its duration.
+            if duration[G.node[v]['vehicle']] + (
+                    dist[pair_u][pair_v] + dist[u][v] - dist[cross_dock][v]) - (
+                    dist[cross_dock][pair_v] + dist[cross_dock][u]
+                    + dist[cross_dock][pair_u]) > T:
+                continue
+
+            if not G.has_edge(u, cross_dock) or not G.has_edge(cross_dock, v) \
+                    or not G.has_edge(pair_u, cross_dock) or not G.has_edge(
+                    cross_dock, pair_v):
+                continue
+
+            # Update capacity of vehicles.
+            capacity[G.node[v]['vehicle']][index] += G.node[u][quantity]
+            capacity[G.node[v]['vehicle']][pair_index] += G.node[u][quantity]
+            capacity[G.node[u]['vehicle']][index] -= G.node[u][quantity]
+            capacity[G.node[u]['vehicle']][pair_index] -= G.node[u][quantity]
+
+            # Update duration of vehicles.
+            duration[G.node[v]['vehicle']] += (
+                dist[pair_u][pair_v] + dist[u][v] - dist[cross_dock][v]
+                - dist[cross_dock][pair_v] + dist[cross_dock][u] + dist[cross_dock][pair_u])
+            duration[G.node[u]['vehicle']] -= (
+                dist[u][cross_dock] + dist[cross_dock][u]) + (
+                dist[pair_u][cross_dock] + dist[cross_dock][pair_u])
+
+            # Update solution.
+            G.node[u]['vehicle'] = G.node[v]['vehicle']
+            G.node[pair_u]['vehicle'] = G.node[v]['vehicle']
+            G.remove_edge(u, cross_dock)
+            G.remove_edge(cross_dock, v)
+            G.edge[cross_dock][u]['vehicle'] = G.node[v]['vehicle']
+            G.edge[cross_dock][pair_u]['vehicle'] = G.node[v]['vehicle']
+            G.add_edge(u, v, weight=dist[u][v], type=G.node[v][node_type],
+                       vehicle=G.node[v]['vehicle'])
+            G.remove_edge(pair_u, cross_dock)
+            G.remove_edge(cross_dock, pair_v)
+            G.add_edge(pair_u, pair_v, weight=dist[pair_u][pair_v],
+                       type=G.node[pair_v][node_type], vehicle=G.node[v]['vehicle'])
     return G
