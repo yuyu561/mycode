@@ -46,7 +46,7 @@ for i in range(len(E)):
 def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='Lng', py='Lat',
                       node_type='tp', quantity='quantity', pair='pair',
                       cons='consolidation', tolerance=20, L=12, k=2, a=10,
-                      diversification_iter=0, capacity_cap=150):
+                      diversification_iter=0, capacity_cap=150,max_tabu_len=20):
 
     # Calculate distance for every pair of nodes and save it in a dictionary.
     dist = defaultdict(dict)
@@ -80,10 +80,10 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='Lng', py='Lat',
 	while diver_iter_total < tolerance:
 		if new_best ==1 or diver_iter%10==0:
 			
-			temp_solution, cost=inter_route_change(routing_dic,G,dist,capacity_p_c)
+			temp_solution, cost=inter_route_change(routing_dic,G,dist,capacity_p_c,tabu_list,max_tabu_len)
 			new_best=0
 		else:
-			temp_solution, cost=intra_route_change()
+			temp_solution, cost=intra_route_change(routing_dic,G,dist,capacity_p_c,tabu_list)
 		
 		if cost < best_cost and check_temp_solution_feasible(temp_solution):
 			diver_iter = 0
@@ -98,8 +98,10 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='Lng', py='Lat',
     
 
 	
-def inter_route_change(routing_dic,G,dist,capacity_p_c):
+def inter_route_change(routing_dic,G,dist,capacity_p_c,tabu_list,max_tabu_len):
 	for u in G:
+		if u in tabu_list:
+			continue
 		if G.node[u][node_type] == 'pickup':
 			vehicle_id_u = find_vehicle_by_node(routing_dic, u)
 			current_route=routing_dic[vehicle_id_u][:]
@@ -135,11 +137,12 @@ def inter_route_change(routing_dic,G,dist,capacity_p_c):
 				else: 
 					routing_dic[vehicle_id_u] = current_route[:]
 				routing_dic[best_change_move[0]] = best_change_move[1][:]
+				tabu_list=update_tabu_list(tabu_list,u,max_tabu_len)
 	
 	cost_route_dic = sum([calculate_route_f(G,routing_dic[vehicle_id],dist) for vehicle_id in routing_dic])
 	return 	routing_dic.copy(),cost_route_dic
 				
-def intra_route_change(routing_dic,G,dist,capacity_p_c):
+def intra_route_change(routing_dic,G,dist,capacity_p_c,tabu_list):
 	for u in G:
 		vehicle_id_u = find_vehicle_by_node(routing_dic, u)
 		current_route=routing_dic[vehicle_id_u][:]
@@ -165,7 +168,7 @@ def intra_route_change(routing_dic,G,dist,capacity_p_c):
 
 			if best_change_cost != 0 :
 				routing_dic[vehicle_id_u] = best_change_move[:]
-
+			
 		if G.node[u][node_type] == 'dropoff':
 			for posi in range(pair_posi+1,len(current_route)):
 				current_route_new=current_route[:]
@@ -183,7 +186,12 @@ def intra_route_change(routing_dic,G,dist,capacity_p_c):
 	cost_route_dic = sum([calculate_route_f(G,routing_dic[vehicle_id],dist) for vehicle_id in routing_dic])
 	return 	routing_dic.copy(),cost_route_dic
 
-
+def update_tabu_list(tabu_list,u,max_tabu_len):
+	if len(tabu_list)>=max_tabu_len:
+		tabu_list.pop(0)
+		tabu_list.append(u)
+	return tabu_list
+	
 # search over all permutations 
 def clarke_wright(G, routing_dic, dist, node_type, quantity, pair, capacity_cap, simplify='Y'):
 	savings = {}
