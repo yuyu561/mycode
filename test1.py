@@ -46,7 +46,7 @@ for i in range(len(E)):
 def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='Lng', py='Lat',
                       node_type='tp', quantity='quantity', pair='pair',
                       cons='consolidation', tolerance=20, L=12, k=2, a=10,
-                      diversification_iter=0):
+                      diversification_iter=0, capacity_cap=150):
 
     # Calculate distance for every pair of nodes and save it in a dictionary.
     dist = defaultdict(dict)
@@ -61,7 +61,7 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='Lng', py='Lat',
 
     # Construct an initial-primitive solution.
 	routing_dic = construct_primitive_solution(G, routing_dic, node_type, pair, dist)
-	routing_dic = clarke_wright(G, routing_dic, dist, node_type, quantity, pair)
+	routing_dic = clarke_wright(G, routing_dic, dist, node_type, quantity, pair, capacity_cap, simplify='Y')
 	
 	
 	used_vehicles = len(routing_dic)
@@ -72,7 +72,7 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='Lng', py='Lat',
 	tabu_list = []
 	diver_iter_total = 0
 	diver_iter = 0
-	diversification_iter = tolerance if diversification_iter is None else diversification_iter
+	#diversification_iter = tolerance if diversification_iter is None else diversification_iter
 	new_best = 1
 	
     # Tabu algorithm's main loop.
@@ -88,7 +88,7 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='Lng', py='Lat',
 		if cost < best_cost and check_temp_solution_feasible(temp_solution):
 			diver_iter = 0
 			best_cost = cost
-			best_sol = temp_solution
+			best_sol = temp_solution.copy()
 			tabu_list = []
 		else:
 			diver_iter += 1
@@ -137,7 +137,7 @@ def inter_route_change(routing_dic,G,dist,capacity_p_c):
 				routing_dic[best_change_move[0]] = best_change_move[1][:]
 	
 	cost_route_dic = sum([calculate_route_f(G,routing_dic[vehicle_id],dist) for vehicle_id in routing_dic])
-	return 	routing_dic,cost_route_dic
+	return 	routing_dic.copy(),cost_route_dic
 				
 def intra_route_change(routing_dic,G,dist,capacity_p_c):
 	for u in G:
@@ -181,11 +181,11 @@ def intra_route_change(routing_dic,G,dist,capacity_p_c):
 				routing_dic[vehicle_id_u] = best_change_move[:]
 
 	cost_route_dic = sum([calculate_route_f(G,routing_dic[vehicle_id],dist) for vehicle_id in routing_dic])
-	return 	routing_dic,cost_route_dic
+	return 	routing_dic.copy(),cost_route_dic
 
 
-	
-def clarke_wright(G, routing_dic, dist, node_type, quantity, pair):
+# search over all permutations 
+def clarke_wright(G, routing_dic, dist, node_type, quantity, pair, capacity_cap, simplify='Y'):
 	savings = {}
 	for u in G:
 		vehicle_id_u = find_vehicle_by_node(routing_dic, u)  
@@ -197,31 +197,33 @@ def clarke_wright(G, routing_dic, dist, node_type, quantity, pair):
 				pair_v = G.node[v][pair]
 				
 				vehicle_id_v = find_vehicle_by_node(routing_dic, v)  
-				current_route_v=routing_dic[vehicle_id_v]
+				current_route_v=routing_dic[vehicle_id_v][:]
 				current_cost_v=calculate_route_duration(G,current_route_v,dist)
 				
-				start_node=current_route[0]
-				current_route.pop(0)
-				current_route.append(v)
-				current_route.append(pair_v)
-				
-				best_route, best_route_cost = [], float('inf')
-				for route in itertools.permutations(current_route):
-					route.insert(0,start_node)
-					#check if it is feasible
-					route_capacity = calculate_route_capacity(G, route, quantity,node_type)
-					route_distance = calculate_route_duration(G,route,dist)
-					if not(check_route_order and check_route_capacity):
-						continue
-					if route_distance<best_route_cost:
-						best_route, best_route_cost=route, route_distance
-				if not best_route_cost == float('inf'):
-					current_route_v.remove(v)
-					current_route_v.remove(pair_v)
-					reduced_route_v_cost=calculate_route_duration(G,current_route_v,dist)
-                    
-					savings[(u,v)] = current_cost_u + current_cost_v - best_route_cost - reduced_route_v_cost
- 
+				if simplify=='Y':
+					current_route_new=current_route[:]
+					start_node=current_route_new[0]
+					current_route_new.pop(0)
+					current_route_new.append(v)
+					current_route_new.append(pair_v)
+					
+					best_route, best_route_cost = [], float('inf')
+					for route in itertools.permutations(current_route_new):
+						route.insert(0,start_node)
+						#check if it is feasible
+						route_capacity = calculate_route_capacity(G, route, quantity,node_type)
+						route_distance = calculate_route_duration(G,route,dist)
+						if not(check_route_order(G, route) and check_route_capacity(route_capacity,capacity_cap)):
+							continue
+						if route_distance<best_route_cost:
+							best_route, best_route_cost=route[:], route_distance
+					if not best_route_cost == float('inf'):
+						current_route_v.remove(v)
+						current_route_v.remove(pair_v)
+						reduced_route_v_cost=calculate_route_duration(G,current_route_v,dist)
+						
+						savings[(u,v)] = current_cost_u + current_cost_v - best_route_cost - reduced_route_v_cost
+ 				
 	import operator
 
 	sorted_savings = sorted(savings.items(), key=operator.itemgetter(1),
@@ -233,9 +235,9 @@ def clarke_wright(G, routing_dic, dist, node_type, quantity, pair):
 		vehicle_id_u = find_vehicle_by_node(routing_dic, u) 
 		vehicle_id_v = find_vehicle_by_node(routing_dic, v) 
         if  vehicle_id_u != vehicle_id_v and G.node[u][node_type] == 'pickup' and G.node[v][node_type] == 'pickup':
-			urrent_route=routing_dic[vehicle_id_u][:]
-			current_cost_u=calculate_route_duration(G,urrent_route,dist)
-			current_route_v=routing_dic[vehicle_id_v]
+			current_route=routing_dic[vehicle_id_u][:]
+			current_cost_u=calculate_route_duration(G,current_route,dist)
+			current_route_v=routing_dic[vehicle_id_v][:]
 			current_cost_v=calculate_route_duration(G,current_route_v,dist)
 			
 			start_node=current_route[0]
@@ -252,17 +254,17 @@ def clarke_wright(G, routing_dic, dist, node_type, quantity, pair):
 				if not(check_route_order(G, route) and check_route_capacity(route_capacity,capacity_cap)):
 					continue
 				if route_distance<best_route_cost:
-					best_route, best_route_cost=route, route_distance
+					best_route, best_route_cost=route[:], route_distance
 			if not best_route_cost == float('inf'):
 				current_route_v.remove(v)
 				current_route_v.remove(pair_v)
 				if len(current_route_v)<=1:
 					routing_dic.pop(vehicle_id_v)
 				else:
-					routing_dic[vehicle_id_v] = current_route_v
-				routing_dic[vehicle_id_u] = best_route
+					routing_dic[vehicle_id_v] = current_route_v[:]
+				routing_dic[vehicle_id_u] = best_route[:]
 				
-	return routing_dic
+	return routing_dic.copy()
 	
 	
 	
@@ -275,8 +277,8 @@ def construct_primitive_solution(G, routing_dic, node_type, pair, dist):
 	for u in G:
 		if G.node[u][node_type] == 'pickup':
 			pair_node = G.node[u][pair]
-			G.node[u]['vehicle'] = vehicle_id
-			G.node[pair_node]['vehicle'] = vehicle_id
+			#G.node[u]['vehicle'] = vehicle_id
+			#G.node[pair_node]['vehicle'] = vehicle_id
 
 			# find the best start point 
 			min_dist=float('inf')
@@ -288,7 +290,7 @@ def construct_primitive_solution(G, routing_dic, node_type, pair, dist):
 
 			routing_dic[vehicle_id] = [start_node, u, pair_node]
 			vehicle_id += 1
-	return routing_dic
+	return routing_dic.copy()
 '''
 def calculate_route_cost(route, dist):
 	route_distance=0
@@ -309,15 +311,16 @@ def calculate_route_capacity(G, route, quantity,node_type):
 	return route_capacity
     
 def check_route_capacity(route_capacity,capacity_cap):
-    return max([route_capacity[i] for i in route_capacity])>capacity_cap
+    return max([route_capacity[i] for i in route_capacity])<capacity_cap
 
 def calculate_route_duration(G,route,dist):
 	P_time='P_time'
 	D_time='D_time'
 	node_type='tp'
-	route_timeline={}
+	quantity='quantity'
+	#route_timeline={}
 	arrive_time, leave_time, penalty_time =0, 0, 0
-	route_timeline[route[0]] = [arrive_time, leave_time]
+	#route_timeline[route[0]] = [arrive_time, leave_time]
 	route_duration = 0
 	if len(route)>1:
 		for i in range(1,len(route)):
@@ -337,8 +340,8 @@ def calculate_route_duration(G,route,dist):
 				else:
 					leave_time = service_time + arrive_time
 					penalty_time += (arrive_time - G.node[u][D_time]) * 5
-			route_timeline[u] = [arrive_time, leave_time]
-	route_duration = penalty + leave_time
+			#route_timeline[u] = [arrive_time, leave_time]
+	route_duration = penalty_time + leave_time
 	if leave_time >=720:
 		route_duration = float('inf')
 	return route_duration
@@ -349,9 +352,9 @@ def calculate_route_f(G,route,dist,capacity_p_c):
 	D_time='D_time'
 	node_type='tp'
 	quantity='quantity'
-	route_timeline={}
+	#route_timeline={}
 	arrive_time, leave_time, penalty_time =0, 0, 0
-	route_timeline[route[0]] = [arrive_time, leave_time]
+	#route_timeline[route[0]] = [arrive_time, leave_time]
 	route_duration = 0
 	if len(route)>1:
 		for i in range(1,len(route)):
@@ -371,7 +374,7 @@ def calculate_route_f(G,route,dist,capacity_p_c):
 				else:
 					leave_time = service_time + arrive_time
 					penalty_time += (arrive_time - G.node[u][D_time]) * 5
-			route_timeline[u] = [arrive_time, leave_time]
+			#route_timeline[u] = [arrive_time, leave_time]
 	route_capacity=calculate_route_capacity(G, route, quantity,node_type)
 	route_duration = penalty_time + leave_time + sum([max(each_capacity-capacity_cap,0) for each_capacity in route_capacity]) * capacity_p_c
 	if leave_time >=720:
@@ -394,5 +397,6 @@ def find_vehicle_by_node(routing_dic, u):
 	for vehicle_id in routing_dic:
 		if u in routing_dic[vehicle_id]:
 			vehicle = vehicle_id
+			break
 	return vehicle 
     
