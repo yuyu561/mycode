@@ -25,7 +25,7 @@ data_base_path = "D:/Ali/lastmile/data/"
 A = pd.read_csv(data_base_path+"1.csv",header=0)
 B = pd.read_csv(data_base_path+"2.csv",header=0)
 S = pd.read_csv(data_base_path+"3.csv",header=0)
-E = pd.read_csv(data_base_path+"5.csv",header=0)
+E = pd.read_csv(data_base_path+"5.csv",header=0,nrows=30)
 
 
 for i in range(len(A)):
